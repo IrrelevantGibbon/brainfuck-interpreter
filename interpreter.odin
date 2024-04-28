@@ -102,6 +102,9 @@ execute :: proc(tokens: ^[dynamic]Token) {
 	for token in tokens {
 		instructions(token, &node)
 	}
+
+	fmt.println(node)
+	fmt.println(node.next)
 }
 
 instructions :: proc(token: Token, node: ^^Node) {
@@ -112,7 +115,15 @@ instructions :: proc(token: Token, node: ^^Node) {
 		{
 			newNode := new(Node)
 			newNode^ = Node{0, nil, node^}
+			node^.next = newNode
 			node^ = newNode
+		}
+	case Token.DECREMENT_POINTER:
+		{
+			if node^.prev == nil {
+				return
+			}
+			node^ = node^.prev
 		}
 	case Token.INCREMENT_VALUE:
 		{
