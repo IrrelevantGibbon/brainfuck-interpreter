@@ -2,19 +2,6 @@ package interpreter
 
 import "core:fmt"
 
-
-MAX_RECURSION :: 10
-
-State :: enum {
-	TOKENNIZE,
-	PARSE,
-}
-
-Interpreter :: struct {
-	state: State,
-	error: Error,
-}
-
 Token :: enum {
 	INCREMENT_POINTER,
 	DECREMENT_POINTER,
@@ -29,9 +16,10 @@ Token :: enum {
 
 ErrorType :: enum {
 	INT_OVERFLOW,
+	NO_OPEN_LOOP,
 	NO_CLOSING_LOOP,
 	INFINITE_RECURSION,
-	UNKNOW_TOKEN,
+	UNKNOWN_TOKEN,
 	NONE,
 }
 
@@ -43,34 +31,65 @@ Error :: struct {
 	description: string,
 }
 
-initInterpreter :: proc() -> Interpreter {
-	return
-}
+NoError :: Error{ErrorType.NONE, nil, 0, ""}
 
 
-interprete :: proc(str: []u8) {
+parser :: proc(str: []u8) {
 	tokens, err := tokenizer(str)
-	if err != Error.NONE {
+	defer delete(tokens)
+
+	if err.type != ErrorType.NONE {
 		print_error(err)
 		return
 	}
+
+	execute(&tokens)
 }
 
 tokenizer :: proc(str: []u8) -> ([dynamic]Token, Error) {
-	tokens: [dynamic]Token
-	reserve(&tokens, len(str))
+	tokens := make([dynamic]Token, len(str))
+
+	openBraces := make([dynamic]int, 0)
+	defer delete(openBraces)
+
 	for char, index in str {
 		token := matchToken(char)
 		if token == Token.UNKNOWN_TOKEN {
-			return tokens, Error.UNKNOW_TOKEN
+			return tokens,
+				Error {
+					ErrorType.UNKNOWN_TOKEN,
+					Token.UNKNOWN_TOKEN,
+					index,
+					"Unknown token has been found",
+				}
 		}
-		append(&tokens, matchToken(char))
+
+		if token == Token.OPEN_LOOP {
+			append(&openBraces, index)
+		}
+
+		if token == Token.CLOSE_LOOP {
+			_, openBrace := pop_safe(&openBraces)
+			if !openBrace {
+				return tokens,
+					Error{ErrorType.NO_OPEN_LOOP, Token.CLOSE_LOOP, index, "No Open loop"}
+			}
+		}
+
+		tokens[index] = token
 	}
+
+	if len(openBraces) > 0 {
+		return tokens,
+			Error{ErrorType.NO_CLOSING_LOOP, Token.OPEN_LOOP, pop(&openBraces), "No Closing loop"}
+	}
+
 	shrink(&tokens)
-	return tokens, Error.NONE
+	return tokens, NoError
 }
 
-parse :: proc(tokens: []Token) {
+
+execute :: proc(tokens: ^[dynamic]Token) {
 
 }
 
@@ -100,7 +119,7 @@ matchToken :: proc(char: u8) -> Token {
 
 print_error :: proc(error: Error) {
 	fmt.printfln(
-		"Error : Founded Token : %d\nAt position : %d\nDescription : %s",
+		"-- Error -- \nFounded Token : %d\nAt position : %d\nDescription : %s\n-----------",
 		error.position,
 		error.token,
 		error.description,
