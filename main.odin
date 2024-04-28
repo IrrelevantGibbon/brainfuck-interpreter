@@ -1,6 +1,6 @@
 package interpreter
 
 main :: proc() {
-	s := "<++[++]"
+	s := "++<+[++]"
 	parser(transmute([]u8)s)
 }

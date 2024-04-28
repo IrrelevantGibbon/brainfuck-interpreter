@@ -2,6 +2,12 @@ package interpreter
 
 import "core:fmt"
 
+Node :: struct {
+	value: int,
+	next:  ^Node,
+	prev:  ^Node,
+}
+
 Token :: enum {
 	INCREMENT_POINTER,
 	DECREMENT_POINTER,
@@ -90,7 +96,33 @@ tokenizer :: proc(str: []u8) -> ([dynamic]Token, Error) {
 
 
 execute :: proc(tokens: ^[dynamic]Token) {
+	node := new(Node)
+	node^ = Node{0, nil, nil}
 
+	for token in tokens {
+		instructions(token, &node)
+	}
+}
+
+instructions :: proc(token: Token, node: ^^Node) {
+	node := node
+
+	#partial switch token {
+	case Token.INCREMENT_POINTER:
+		{
+			newNode := new(Node)
+			newNode^ = Node{0, nil, node^}
+			node^ = newNode
+		}
+	case Token.INCREMENT_VALUE:
+		{
+			node^.value += 1
+		}
+	case Token.DECREMENT_VALUE:
+		{
+			node^.value -= 1
+		}
+	}
 }
 
 
