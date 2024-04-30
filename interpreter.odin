@@ -1,6 +1,8 @@
 package interpreter
 
+import "core:c/libc"
 import "core:fmt"
+
 
 Node :: struct {
 	value: int,
@@ -8,12 +10,21 @@ Node :: struct {
 	prev:  ^Node,
 }
 
+Loop :: Node
+Data :: Node
+
+Context :: struct {
+	loop: ^Loop,
+	data: ^Data,
+	idx:  int,
+}
+
 Token :: enum {
 	INCREMENT_POINTER,
 	DECREMENT_POINTER,
 	INCREMENT_VALUE,
 	DECREMENT_VALUE,
-	PRINT_ASCII_VALUE,
+	OUTPUT,
 	INPUT,
 	OPEN_LOOP,
 	CLOSE_LOOP,
@@ -39,6 +50,8 @@ Error :: struct {
 
 NoError :: Error{ErrorType.NONE, nil, 0, ""}
 
+STACK_SIZE_MAX :: 100
+
 
 parser :: proc(str: []u8) {
 	tokens, err := tokenizer(str)
@@ -62,12 +75,7 @@ tokenizer :: proc(str: []u8) -> ([dynamic]Token, Error) {
 		token := matchToken(char)
 		if token == Token.UNKNOWN_TOKEN {
 			return tokens,
-				Error {
-					ErrorType.UNKNOWN_TOKEN,
-					Token.UNKNOWN_TOKEN,
-					index,
-					"Unknown token has been found",
-				}
+				Error{ErrorType.UNKNOWN_TOKEN, Token.UNKNOWN_TOKEN, index, "Unknown token"}
 		}
 
 		if token == Token.OPEN_LOOP {
@@ -95,43 +103,90 @@ tokenizer :: proc(str: []u8) -> ([dynamic]Token, Error) {
 }
 
 
-execute :: proc(tokens: ^[dynamic]Token) {
+initNode :: proc() -> ^Node {
 	node := new(Node)
 	node^ = Node{0, nil, nil}
-
-	for token in tokens {
-		instructions(token, &node)
-	}
-
-	fmt.println(node)
-	fmt.println(node.next)
+	return node
 }
 
-instructions :: proc(token: Token, node: ^^Node) {
-	node := node
+initContext :: proc() -> Context {
+	return Context{nil, initNode(), 0}
+}
 
+
+execute :: proc(tokens: ^[dynamic]Token) {
+	ctx := initContext()
+
+	for ctx.idx < len(tokens) {
+		instructions(tokens[ctx.idx], &ctx)
+	}
+
+	free_all(context.temp_allocator)
+}
+
+instructions :: proc(token: Token, ctx: ^Context) {
+	ctx := ctx
+
+	ctx.idx += 1
 	#partial switch token {
 	case Token.INCREMENT_POINTER:
 		{
-			newNode := new(Node)
-			newNode^ = Node{0, nil, node^}
-			node^.next = newNode
-			node^ = newNode
+			if ctx.data.next == nil {
+				node := new(Node)
+				node^ = Node{0, nil, ctx.data}
+				ctx.data.next = node
+				ctx.data = node
+				return
+			}
+			ctx.data = ctx.data.next
 		}
 	case Token.DECREMENT_POINTER:
 		{
-			if node^.prev == nil {
+			if ctx.data.prev == nil {
 				return
 			}
-			node^ = node^.prev
+			ctx.data = ctx.data.prev
 		}
 	case Token.INCREMENT_VALUE:
 		{
-			node^.value += 1
+			ctx.data.value += 1
 		}
 	case Token.DECREMENT_VALUE:
 		{
-			node^.value -= 1
+			ctx.data.value -= 1
+		}
+	case Token.OUTPUT:
+		{
+			fmt.printf("%c", ctx.data.value)
+		}
+	case Token.OPEN_LOOP:
+		{
+			if ctx.data.value > 0 {
+				current_loop := ctx.loop
+				node := new(Node)
+				node^ = Node{ctx.idx, nil, ctx.loop}
+				current_loop = node
+				ctx.loop = current_loop
+			}
+		}
+	case Token.CLOSE_LOOP:
+		{
+			if ctx.data.value == 0 {
+				if ctx.loop.prev == nil {
+					free(ctx.loop)
+				} else {
+					old_loop := ctx.loop
+					ctx.loop = ctx.loop.prev
+					free(old_loop)
+				}
+			} else {
+				ctx.idx = ctx.loop.value
+			}
+		}
+	case Token.INPUT:
+		{
+			char: i32 = libc.getchar()
+			ctx.data.value += int(char)
 		}
 	}
 }
@@ -139,16 +194,16 @@ instructions :: proc(token: Token, node: ^^Node) {
 
 matchToken :: proc(char: u8) -> Token {
 	switch char {
-	case '<':
-		return Token.INCREMENT_POINTER
 	case '>':
+		return Token.INCREMENT_POINTER
+	case '<':
 		return Token.DECREMENT_POINTER
 	case '+':
 		return Token.INCREMENT_VALUE
 	case '-':
 		return Token.DECREMENT_VALUE
 	case '.':
-		return Token.PRINT_ASCII_VALUE
+		return Token.OUTPUT
 	case ',':
 		return Token.INPUT
 	case '[':
