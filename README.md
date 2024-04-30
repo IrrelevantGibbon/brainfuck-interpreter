@@ -1,4 +1,4 @@
 # Brainfuck-interpreter
 
 
-Simple Brainfuck interpreter, dirty without all the errors possible or even a safe mode but it was fun
+Simple Brainfuck interpreter, dirty without good error management or even a safe mode but it was fun
