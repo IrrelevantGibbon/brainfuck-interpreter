@@ -5,7 +5,7 @@ import "core:fmt"
 
 
 Node :: struct {
-	value: int,
+	value: u8,
 	next:  ^Node,
 	prev:  ^Node,
 }
@@ -16,10 +16,16 @@ Data :: Node
 Context :: struct {
 	loop: ^Loop,
 	data: ^Data,
-	idx:  int,
+	idx:  u32,
 }
 
-Token :: enum {
+Token :: struct {
+	idx:  u32,
+	type: TokenType,
+	tag:  u32,
+}
+
+TokenType :: enum {
 	INCREMENT_POINTER,
 	DECREMENT_POINTER,
 	INCREMENT_VALUE,
@@ -43,7 +49,7 @@ ErrorType :: enum {
 
 Error :: struct {
 	type:        ErrorType,
-	token:       Token,
+	token:       TokenType,
 	position:    int,
 	description: string,
 }
@@ -58,11 +64,12 @@ parser :: proc(str: []u8) {
 	defer delete(tokens)
 
 	if err.type != ErrorType.NONE {
-		print_error(err)
+		printError(err)
 		return
 	}
 
 	execute(&tokens)
+	free_all(context.temp_allocator)
 }
 
 tokenizer :: proc(str: []u8) -> ([dynamic]Token, Error) {
@@ -71,31 +78,44 @@ tokenizer :: proc(str: []u8) -> ([dynamic]Token, Error) {
 	openBraces := make([dynamic]int, 0)
 	defer delete(openBraces)
 
+	pad_idx := 0
+
 	for char, index in str {
 		token := matchToken(char)
-		if token == Token.UNKNOWN_TOKEN {
-			return tokens,
-				Error{ErrorType.UNKNOWN_TOKEN, Token.UNKNOWN_TOKEN, index, "Unknown token"}
-		}
+		tag_idx: u32
 
-		if token == Token.OPEN_LOOP {
-			append(&openBraces, index)
-		}
-
-		if token == Token.CLOSE_LOOP {
-			_, openBrace := pop_safe(&openBraces)
-			if !openBrace {
-				return tokens,
-					Error{ErrorType.NO_OPEN_LOOP, Token.CLOSE_LOOP, index, "No Open loop"}
+		#partial switch token {
+		case TokenType.UNKNOWN_TOKEN:
+			{}
+		case TokenType.OPEN_LOOP:
+			append(&openBraces, index - pad_idx)
+		case TokenType.CLOSE_LOOP:
+			{
+				tag_idx := &tag_idx
+				e, openBrace := pop_safe(&openBraces)
+				tag_idx^ = u32(e)
+				if !openBrace {
+					return tokens,
+						Error{ErrorType.NO_OPEN_LOOP, TokenType.CLOSE_LOOP, index, "No Open loop"}
+				}
 			}
 		}
-
-		tokens[index] = token
+		if b32(tag_idx) {
+			tokens[tag_idx].tag = u32(index - pad_idx)
+			tokens[index - pad_idx] = Token{u32(index - pad_idx), token, tag_idx}
+		} else {
+			tokens[index - pad_idx] = Token{u32(index - pad_idx), token, 0}
+		}
 	}
 
 	if len(openBraces) > 0 {
 		return tokens,
-			Error{ErrorType.NO_CLOSING_LOOP, Token.OPEN_LOOP, pop(&openBraces), "No Closing loop"}
+			Error {
+				ErrorType.NO_CLOSING_LOOP,
+				TokenType.OPEN_LOOP,
+				pop(&openBraces),
+				"No Closing loop",
+			}
 	}
 
 	shrink(&tokens)
@@ -116,20 +136,17 @@ initContext :: proc() -> Context {
 
 execute :: proc(tokens: ^[dynamic]Token) {
 	ctx := initContext()
-
-	for ctx.idx < len(tokens) {
+	for ctx.idx < u32(len(tokens)) {
 		instructions(tokens[ctx.idx], &ctx)
 	}
-
-	free_all(context.temp_allocator)
 }
 
 instructions :: proc(token: Token, ctx: ^Context) {
 	ctx := ctx
 
 	ctx.idx += 1
-	#partial switch token {
-	case Token.INCREMENT_POINTER:
+	#partial switch token.type {
+	case TokenType.INCREMENT_POINTER:
 		{
 			if ctx.data.next == nil {
 				node := new(Node)
@@ -140,82 +157,85 @@ instructions :: proc(token: Token, ctx: ^Context) {
 			}
 			ctx.data = ctx.data.next
 		}
-	case Token.DECREMENT_POINTER:
+	case TokenType.DECREMENT_POINTER:
 		{
 			if ctx.data.prev == nil {
 				return
 			}
 			ctx.data = ctx.data.prev
 		}
-	case Token.INCREMENT_VALUE:
+	case TokenType.INCREMENT_VALUE:
 		{
 			ctx.data.value += 1
 		}
-	case Token.DECREMENT_VALUE:
+	case TokenType.DECREMENT_VALUE:
 		{
 			ctx.data.value -= 1
 		}
-	case Token.OUTPUT:
+	case TokenType.OUTPUT:
 		{
 			fmt.printf("%c", ctx.data.value)
 		}
-	case Token.OPEN_LOOP:
+	case TokenType.OPEN_LOOP:
 		{
-			if ctx.data.value > 0 {
+			if ctx.data.value != 0 {
 				current_loop := ctx.loop
 				node := new(Node)
-				node^ = Node{ctx.idx, nil, ctx.loop}
+				node^ = Node{u8(ctx.idx - 1), nil, ctx.loop}
 				current_loop = node
 				ctx.loop = current_loop
+			} else {
+				ctx.idx = token.tag + 1
 			}
 		}
-	case Token.CLOSE_LOOP:
+	case TokenType.CLOSE_LOOP:
 		{
 			if ctx.data.value == 0 {
 				if ctx.loop.prev == nil {
 					free(ctx.loop)
+					ctx.loop = nil
 				} else {
 					old_loop := ctx.loop
 					ctx.loop = ctx.loop.prev
 					free(old_loop)
 				}
 			} else {
-				ctx.idx = ctx.loop.value
+				ctx.idx = u32(ctx.loop.value + 1)
 			}
 		}
-	case Token.INPUT:
+	case TokenType.INPUT:
 		{
 			char: i32 = libc.getchar()
-			ctx.data.value += int(char)
+			ctx.data.value += u8(char)
 		}
 	}
 }
 
 
-matchToken :: proc(char: u8) -> Token {
+matchToken :: proc(char: u8) -> TokenType {
 	switch char {
 	case '>':
-		return Token.INCREMENT_POINTER
+		return TokenType.INCREMENT_POINTER
 	case '<':
-		return Token.DECREMENT_POINTER
+		return TokenType.DECREMENT_POINTER
 	case '+':
-		return Token.INCREMENT_VALUE
+		return TokenType.INCREMENT_VALUE
 	case '-':
-		return Token.DECREMENT_VALUE
+		return TokenType.DECREMENT_VALUE
 	case '.':
-		return Token.OUTPUT
+		return TokenType.OUTPUT
 	case ',':
-		return Token.INPUT
+		return TokenType.INPUT
 	case '[':
-		return Token.OPEN_LOOP
+		return TokenType.OPEN_LOOP
 	case ']':
-		return Token.CLOSE_LOOP
+		return TokenType.CLOSE_LOOP
 	case:
-		return Token.UNKNOWN_TOKEN
+		return TokenType.UNKNOWN_TOKEN
 	}
 }
 
-print_error :: proc(error: Error) {
+printError :: proc(error: Error) {
 	fmt.printfln(
 		"-- Error -- \nFounded Token : %d\nAt position : %d\nDescription : %s\n-----------",
 		error.position,
